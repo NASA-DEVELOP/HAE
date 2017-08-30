@@ -1,0 +1,139 @@
+var chileShape = ee.FeatureCollection("ft:1iSvIqXW2C2ZZqPBf2Rir9eJueFhYJJuTxgUtGljG"),
+    smaps = ee.ImageCollection("projects/chile-water/SMAP_SM/SMAP_daily");
+
+/********************************************************************
+  Visualize SMAP Soil Moisture with time series chart 
+  - built by NASA DEVELOP Team Chile Water Resources (Spring 2017)
+  - Billy Babis (billybabis@gmail.com), Mariana Webb, Garrett Mcgurk
+  This map uses only the Soil Moisture band with the SMAP radiometer sensor from Apr-01-2015:Feb-25-2017
+  -> We have uploaded the dataset and hope to automate modern SMAP data ingestion but is not currently present
+
+*******************************************************************/
+//print(smaps);
+smaps=smaps.map(function(img){
+  img = img.updateMask(img.gt(0));
+  return img.clip(chileShape)});
+
+//The SMAP SM collection we have includes 2 (AM & PM) images per day. SMAP covers the entire globe in 2-3 days
+//Thus, for full analysis, we mosaic this collection into SMAP_3day 
+//convert a list of numbers into a list of dates and then to images corresponding with those dates
+//The variable names should help elucidate each step
+var smapDaily_list = ee.List.sequence(0, smaps.size().divide(2));
+//print(smapDaily_list);
+var date = ee.Date("2015-04-01");
+smapDaily_list=smapDaily_list.map(function(num){
+  return date.advance(num,"day");
+});
+//print(smapDaily_list);
+smapDaily_list = smapDaily_list.map(function(currDate) {
+    var smapDay = ee.Image( smaps.filterDate(currDate).mosaic() );
+    smapDay = smapDay.set({"system:time_start":currDate});
+    return smapDay;
+});
+var smapDaily = ee.ImageCollection.fromImages(smapDaily_list); //convert list to ee.ImageCollection
+
+
+var smap3day_list = ee.List.sequence(0, smapDaily.size(),3);
+//print(smap3day_list);
+smap3day_list=smap3day_list.map(function(num){
+  return date.advance(num,"day");
+});
+//print(smap3day_list);
+smap3day_list=smap3day_list.map(function(currdate){
+  currdate = ee.Date(currdate);
+  var endDate = currdate.advance(2,"day");
+  var smap3days = smapDaily.filterDate(currdate,endDate);
+  return smap3days.mosaic().set({"system:time_start":currdate});
+});
+//print(smap3day_list);
+
+var smap3day = ee.ImageCollection.fromImages(smap3day_list);
+//print(smap3day);
+
+var vis = {min: 0, max: 1, palette: [
+  'FFFFFF', 'CE7E45', 'FCD163', 'ccccff', '9999ff',
+  '6666ff', '3333ff', '0000cc', '000066', '00001a'
+]};
+var image1 = ee.Image(smap3day.first());
+Map.addLayer(image1, vis, 'SMAP Soil Moisture');
+Map.setCenter(-72.34, -44.56, 7);
+
+
+/********************ADD LABEL***********/
+var legend = ui.Panel({
+  style: {
+    position: 'top-left',
+    padding: '8px 15px'
+  }
+});
+var legendTitle = ui.Label({
+  value: 'SMAP Soil Moisture (volumetric ratio)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendTitle);
+var legendSubTitle = ui.Label({
+  value: 'Click any point with SMAP values to see a time series chart on the left panel (be patient)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendSubTitle);
+Map.add(legend);
+
+/**************Add Chart Panel***********/
+// Create a panel to hold our widgets.
+var panel = ui.Panel();
+panel.style().set('width', '300px');
+
+// Create an intro panel with labels.
+var intro = ui.Panel([
+  ui.Label({
+    value: 'Chart Inspector',
+    style: {fontSize: '20px', fontWeight: 'bold'}
+  }),
+  ui.Label('Click a point on the map to inspect.')
+]);
+panel.add(intro);
+
+// Create panels to hold lon/lat values.
+var lon = ui.Label();
+var lat = ui.Label();
+panel.add(ui.Panel([lon, lat], ui.Panel.Layout.flow('horizontal')));
+
+// Register a callback on the default map to be invoked when the map is clicked.
+Map.onClick(function(coords) {
+  // Update the lon/lat panel with values from the click event.
+  lon.setValue('lon: ' + coords.lon.toFixed(2)),
+  lat.setValue('lat: ' + coords.lat.toFixed(2));
+
+  // Add a red dot for the point clicked on.
+  var point = ee.Geometry.Point(coords.lon, coords.lat);//.buffer(5000);
+  var dot = ui.Map.Layer(point, {color: 'FF0000'});
+  Map.layers().set(1, dot);
+  var SMAP_SM_Chart = ui.Chart.image.series({
+    imageCollection: smap3day,
+    region: point,
+    reducer: ee.Reducer.mean(),
+    scale: 111320
+});
+  SMAP_SM_Chart.setOptions({
+    title: 'Soil Moisture Over Time',
+    vAxis: {title: 'SM (m^3/m^3)'},
+    hAxis: {title: 'date', format: 'MM-yy', gridlines: {count: 7}},
+  });
+  panel.widgets().set(2, SMAP_SM_Chart);
+
+});
+
+Map.style().set('cursor', 'crosshair');
+
+// Add the panel to the ui.root.
+ui.root.insert(0, panel);

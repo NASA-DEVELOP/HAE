@@ -1,0 +1,19 @@
+var MODIS = ee.ImageCollection("MODIS/006/MOD10A1"),
+    ChileClip = ee.FeatureCollection("ft:1F1lo5v4m1-gIDEm9eJqR2MAlSgbEHxRENOTwTBm4");
+
+
+//var MODIS = ee.ImageCollection('projects/chile-water/MODIS_SC/MODIS_8day')
+MODIS = MODIS.select(['NDSI_Snow_Cover']).filterDate('2001-01-01','2017-01-01');
+
+// Compute min and max values
+var Max = MODIS.max();
+
+//blue to coral
+Max = Max.visualize({min:-0.1, max: 100, palette:['5e1641', '5e1641', '5e1641', '87205e', '87205e', 'e55252', 'e55252', 'e5529c', 'e5529c', 'e59c52', '1a3e66', '52e5e5', 'cbf7f7', 'ffffff']});
+Max = Max.clip(ChileClip);
+Map.setCenter(-74.28, -49.5, 6);
+Map.addLayer(Max);
+
+Export.image.toDrive({
+  image: Max,
+  description: 'WebsiteImage4'})

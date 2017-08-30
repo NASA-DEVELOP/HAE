@@ -1,0 +1,177 @@
+var MODIS_daily = ee.ImageCollection("MODIS/006/MOD10A1"),
+    chileShape = ee.FeatureCollection("ft:1iSvIqXW2C2ZZqPBf2Rir9eJueFhYJJuTxgUtGljG"),
+    AMSRe_SWE_daily = ee.ImageCollection("projects/chile-water/AMSR-E/AMSR-E_daily"),
+    AMSR2_SWE_daily = ee.ImageCollection("projects/chile-water/AMSR2/AMSR2_Daily"),
+    AMSRe_SWE_5day = ee.ImageCollection("projects/chile-water/AMSR-E/AMSR-E_5day"),
+    SMAP_SM_Daily = ee.ImageCollection("projects/chile-water/SMAP_SM/SMAP_daily");
+
+/****************************************************************************************
+  HYDROLOGICAL ANOMALY INDEX (HAI)
+  Using Snow Water Equivalent (SWE), Snow Cover (SC), and Soil Moisutre (SM)
+   to offer possible areas of drought concern
+  - built by NASA DEVELOP Team Chile Water Resources (Spring 2017)
+  - Billy Babis (billybabis@gmail.com), Mariana Webb, Garrett Mcgurk
+  Data sets used include AMSR-e & AMSR-2 SWE data and SMAP SM data both uploaded to GEE ourselves
+   and the vs MODIS SC data from the public GEE data catalog
+
+*****************************************************************************************/
+
+var CURRENT_MONTH = 2;
+var CURRENT_DATE = "2017-02-25";
+var CURRENT_eeDATE = ee.Date(CURRENT_DATE);
+
+/*****************************************MODIS SNOW COVER (SC)********************************/
+// find 'current' month averages and comapare to 'current' date (Feb 25, 2017) 
+var MODIS_SC_daily = ee.ImageCollection(MODIS_daily.select(['NDSI_Snow_Cover']).filterDate("2001-02-23","2017-02-26"));
+//Only include chile data
+MODIS_SC_daily = MODIS_SC_daily.map(function(image) { 
+  return image.clip(chileShape);
+});
+//set the month and year properties in metadata to simplyify process
+var MODIS_SC_daily = MODIS_SC_daily.map(function(img){
+              var d = ee.Date(ee.Number(img.get('system:time_start')));
+              var m = ee.Number(d.get('month'));
+              var y = ee.Number(d.get('year'));
+              return img.set({'month':m, 'year':y});
+            });
+var years = ee.List.sequence(2001,2016);
+var nullImage = ee.Image(0);
+var MODIS_monthAvgs_list = years.map(function(year){
+        var MODIS_SC_daily_monthYear = MODIS_SC_daily.filterMetadata('year', 'equals', year)
+                                                      .filterMetadata('month', 'equals', CURRENT_MONTH);
+       
+      return ee.Algorithms.If(MODIS_SC_daily_monthYear.size().gt(0), //if there is no data for this date, add nullImage
+                             MODIS_SC_daily_monthYear.select('NDSI_Snow_Cover').mean(), //if true
+                             nullImage);        
+});
+MODIS_monthAvgs_list=MODIS_monthAvgs_list.removeAll(ee.List.repeat(nullImage,8));
+var MODIS_monthAvgs = ee.ImageCollection.fromImages(MODIS_monthAvgs_list);
+var currMonthAvg_SC = MODIS_monthAvgs.mean();
+var currWeek = ee.DateRange(CURRENT_eeDATE.advance(-7,"day"),CURRENT_eeDATE);
+
+var currWeekMODIS_SC = MODIS_SC_daily.filterDate(CURRENT_eeDATE.advance(-7,"day"),CURRENT_eeDATE);
+var currentMODIS_SC = currWeekMODIS_SC.mosaic();
+//Map.addLayer(currentMODIS_SC);
+//currMonthAvg_SC=currMonthAvg_SC.updateMask(currentMODIS_SC.gt(0));
+var SC_diff = currMonthAvg_SC.subtract(currentMODIS_SC).divide(currentMODIS_SC.add(currMonthAvg_SC));
+/******************************AMSRe and AMSR2 SNOW WATER EQUIVALENT (SWE)********************************************/
+// find 'current' month averages and comapare to 'current' date (Feb 25, 2017) 
+//AMSRe_SWE_daily = AMSRe_SWE_daily.filterDate("2002-06-20","2012-02-26");
+AMSRe_SWE_5day = AMSRe_SWE_5day.filterDate("2002-06-20","2012-02-26");
+AMSR2_SWE_daily = AMSR2_SWE_daily.filterDate("2012-07-24",CURRENT_DATE);
+var AMSR_SWE_daily = ee.ImageCollection(AMSRe_SWE_5day.merge(AMSR2_SWE_daily));
+
+//clip to chile and add metadata
+AMSR_SWE_daily = AMSR_SWE_daily.map(function(img) {
+              img = img.clip(chileShape);
+              var d = ee.Date(ee.Number(img.get('system:time_start')));
+              var m = ee.Number(d.get('month'));
+              var y = ee.Number(d.get('year'));
+              return img.set({'month':m, 'year':y});
+            });
+var years = ee.List.sequence(2003,2004);
+var AMSR_monthAvgs_list = years.map(function(year){
+        var AMSR_SWE_monthYear = AMSR_SWE_daily.filterMetadata('year', 'equals', year)
+                                                .filterMetadata('month', 'equals', CURRENT_MONTH);
+              return ee.Algorithms.If(AMSR_SWE_monthYear.size().gt(0), //if there is no data for this date, add nullImage
+                             AMSR_SWE_monthYear.select('b1').mean(), //if true
+                             nullImage);        
+});
+AMSR_monthAvgs_list=AMSR_monthAvgs_list.removeAll(ee.List.repeat(nullImage,8));
+var AMSR_monthAvgs = ee.ImageCollection.fromImages(AMSR_monthAvgs_list);
+var currMonthAvg_SWE = AMSR_monthAvgs.mean();
+var currentAMSR_SWE = ee.Image( AMSR_SWE_daily.filterDate("2016-07-05").first() );
+var SWE_diff = currMonthAvg_SWE.subtract(currentAMSR_SWE).divide(currMonthAvg_SWE.add(currentAMSR_SWE));
+/*******************************SMAP Soil Moisture (SM)*****************************/
+SMAP_SM_Daily=SMAP_SM_Daily.map(function(img){
+  img = img.updateMask(img.gt(0));
+  return img.clip(chileShape)});
+var SMAP_SM_mean = SMAP_SM_Daily.mean();
+var SMAP_SM_curr = SMAP_SM_Daily.filterDate("2017-02-25").first();
+var SM_diff = SMAP_SM_mean.subtract(SMAP_SM_curr).divide(SMAP_SM_mean.add(SMAP_SM_curr));
+
+/************************Build HAI index******************************/
+var palette = ['000000', '0000FF', '00FF00', 'FF0000'];
+// Create caution zones using an expression, display.
+var haiSCexp = SC_diff.expression(
+    "(b('NDSI_Snow_Cover') > 0.5) ? 3" +
+      ": (b('NDSI_Snow_Cover') > 0.25) ? 2" +
+        ": (b('NDSI_Snow_Cover') > 0) ? 1" +
+          ": 0"
+).clip(chileShape);
+/*Map.addLayer(haiSCexp,
+             {min: 0, max: 3, palette: palette},
+             'Discrete Hai - Snow Cover');*/
+var haiSWEexp = SWE_diff.expression(
+    "(b('b1') > 0.5) ? 3" +
+      ": (b('b1') > 0.25) ? 2" +
+        ": (b('b1') > 0) ? 1" +
+          ": 0"
+).clip(chileShape);
+/*Map.addLayer(haiSWEexp,
+             {min: 0, max: 3, palette: palette},
+             'Discrete Hai - Snow Water Equivalent');*/
+
+            
+var haiSMexp = SC_diff.expression(
+    "(b('b1') > 0.4) ? 1" +
+      ": (b('b1') > 0.25) ? .666" +
+        ": (b('b1') > 0.1) ? .333" +
+          ": 0"
+).clip(chileShape);
+/*Map.addLayer(haiSMexp,
+             {min: 0, max: 3, palette: palette},
+             'Discrete HAI - Soil Moisture');*/
+
+var HAIexp = haiSCexp.add(haiSWEexp);//.add(haiSMexp);
+Map.addLayer(HAIexp,
+             {min: 0, max: 7, palette: palette},
+             'HAI');
+Map.setCenter(-73.97, -48.68, 5);
+
+/******************ADD THE LEGEND************************/
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+var legendTitle = ui.Label({
+  value: 'Hydrological Anomaly Index (HAI)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendTitle);
+var loading = ui.Label('Loading legend...', {margin: '2px 0 4px 0'});
+legend.add(loading);
+// Creates and styles 1 row of the legend.
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6px'}
+  });
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+// Get the list of palette colors and class names from the image.
+loading.style().set('shown', false);
+legend.add(makeRow("000000", "No Concern or No Data"));
+legend.add(makeRow("0000FF", "Level 1 - Slightly Abnormal"));
+legend.add(makeRow("00FF00","Level 2 - Moderately Abnormal"));
+legend.add(makeRow("FF0000", "Level 3 - Very Abnormal") );
+
+Map.add(legend);
+             

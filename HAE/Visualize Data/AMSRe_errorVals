@@ -1,0 +1,81 @@
+var img = ee.Image("MODIS/051/MCD12Q1/2012_01_01"),
+    img3 = ee.Image("projects/chile-water/AMSR-E/AMSR-E_daily/AMSR_E_L3_DailySnow_V09_20020620_Southern_Hemisphere_SWE_SouthernDaily_6ead181a"),
+    chileShape = ee.FeatureCollection("ft:1iSvIqXW2C2ZZqPBf2Rir9eJueFhYJJuTxgUtGljG"),
+    imageCollection = ee.ImageCollection("projects/chile-water/AMSR-E/AMSR-E_5day"),
+    img2 = ee.Image("projects/chile-water/AMSR-E/AMSR-E_5day/AMSR_E_L3_5DaySnow_V09_20020814_Southern_Hemisphere_SWE_SouthernPentad_9c815508");
+
+img2= img2.select(["b1"],["snow_water_equivalent"]);
+img2 = img2.clip(chileShape);
+print(img2);
+var errorImg = img2;
+var mask = errorImg.gt(50);
+errorImg = errorImg.updateMask(mask);
+
+// Define an SLD style of discrete intervals to apply to the image.
+var sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#F54F4F" quantity="248" label="off-earth"/>' +
+    '<ColorMapEntry color="#6A6A6E" quantity="252" label="land or snow impossible"/>' +
+    '<ColorMapEntry color="#387242" quantity="253" label="icesheet"/>' +
+    '<ColorMapEntry color="#F2F7F7" quantity="254" label="water"/>' +
+    '<ColorMapEntry color="#2E0515" quantity="255" label="missing"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+Map.addLayer(errorImg.sldStyle(sld_intervals), {}, 'Error values');
+
+var sweVals = img2;
+var mask= sweVals.lt(50).gt(0);
+sweVals=sweVals.updateMask(mask);
+Map.addLayer(sweVals, {min:1,max:40,palette:['00FFFF', '0000FF']} );
+
+/*************ADD THE LEGEND****************/
+
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+var legendTitle = ui.Label({
+  value: 'AMSRe SWE',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendTitle);
+var loading = ui.Label('Loading legend...', {margin: '2px 0 4px 0'});
+legend.add(loading);
+// Creates and styles 1 row of the legend.
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6px'}
+  });
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+// Get the list of palette colors and class names from the image.
+errorImg.toDictionary().select(["b1" + ".*"]).evaluate(function(result) {
+  loading.style().set('shown', false);
+  legend.add(makeRow("0000FF","Max SWE value (valid)"))
+  legend.add(makeRow("F54F4F","off-earth"));
+  legend.add(makeRow("6A6A6E","land or snow impossible"));
+  legend.add(makeRow("387242", "ice sheet") );
+  legend.add(makeRow("F2F7F7", "water") );
+  legend.add(makeRow("2E0515", "missing") );
+  
+});
+Map.add(legend);
